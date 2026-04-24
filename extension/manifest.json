@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Nexus Agent",
+  "version": "1.0",
+  "description": "AI-Powered Browser Orchestration Extension",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.ts"]
+    }
+  ],
+  "side_panel": {
+    "default_path": "src/sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Nexus Agent"
+  }
+}
