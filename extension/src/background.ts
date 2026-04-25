@@ -7,6 +7,12 @@ console.log("Nexus Agent Service Worker Initialized");
 
 const DOM_ACTIONS = ['extract_page', 'read_dom', 'click_element', 'fill_form_field', 'scroll_to_element'];
 
+const normalizeSelector = (selector: any): string => {
+  if (typeof selector === 'string') return selector;
+  if (selector == null) return '';
+  return String(selector);
+};
+
 // Listen for messages from the Side Panel or Backend to coordinate tab-level commands
 chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: (response?: any) => void) => {
   try {
@@ -66,13 +72,19 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
 
     // Forward DOM Actions to the active Tab Content Script
     if (DOM_ACTIONS.includes(message.action)) {
+      const safeMessage = {
+        ...message,
+        selector: normalizeSelector(message.selector),
+        value: message.value == null ? '' : String(message.value),
+      };
+
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs: any) => {
         if (tabs.length > 0 && tabs[0].id) {
           const targetTabId = tabs[0].id;
-          chrome.tabs.sendMessage(targetTabId, message, (response: any) => {
+          chrome.tabs.sendMessage(targetTabId, safeMessage, (response: any) => {
              if (chrome.runtime.lastError) {
                 // Fallback for pages where the content script was not already injected.
-                if (message.action === 'read_dom' || message.action === 'extract_page') {
+                if (safeMessage.action === 'read_dom' || safeMessage.action === 'extract_page') {
                    chrome.scripting.executeScript({
                        target: {tabId: targetTabId},
                        func: (action: string, selector?: string) => {
@@ -123,7 +135,7 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
                            const el = document.querySelector(selector || '') as HTMLElement;
                            return { success: true, text: el ? el.innerText : null };
                        },
-                       args: [message.action, message.selector]
+                       args: [safeMessage.action, safeMessage.selector]
                    }, (injectionResults: any) => {
                        if (chrome.runtime.lastError) {
                            sendResponse({ success: false, error: chrome.runtime.lastError.message });

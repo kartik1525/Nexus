@@ -30,7 +30,7 @@ const getHumanAction = (raw: string) => {
 
 // --- COMPONENTS ---
 
-const Header = ({ isExecuting, activeTab, setActiveTab }: { isExecuting: boolean, activeTab: string, setActiveTab: (t: any) => void }) => (
+const Header = ({ isExecuting, activeTab, setActiveTab, modelLabel }: { isExecuting: boolean, activeTab: string, setActiveTab: (t: any) => void, modelLabel: string }) => (
   <header className="px-4 py-3 border-b border-[#1f2937] bg-[#0B0F1A]/90 backdrop-blur-md sticky top-0 z-20 flex justify-between items-center shadow-sm">
     <div className="flex items-center gap-3">
       <div className="relative flex h-3 w-3">
@@ -40,6 +40,7 @@ const Header = ({ isExecuting, activeTab, setActiveTab }: { isExecuting: boolean
       <div>
         <h1 className="font-bold text-sm tracking-wide bg-gradient-to-r from-white to-[#9CA3AF] bg-clip-text text-transparent leading-tight">Nexus Agent</h1>
         <p className="text-[10px] text-[#9CA3AF] tracking-widest uppercase font-semibold">{isExecuting ? 'Live Execution' : 'Standby'}</p>
+        <p className="text-[10px] text-[#22C55E] mt-0.5">Model: {modelLabel}</p>
       </div>
     </div>
     <div className="flex gap-2">
@@ -176,8 +177,9 @@ const App = () => {
   const [steps, setSteps] = useState<StepGroup[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [finalOutput, setFinalOutput] = useState<string | null>(null);
+  const [modelLabel, setModelLabel] = useState('Mistral 7B Instruct V0.3 (via OpenRouter)');
 
-  const [backendUrl, setBackendUrl] = useState('ws://localhost:8000/v1/ws/agent');
+  const [backendUrl, setBackendUrl] = useState('ws://localhost:8001/v1/ws/agent');
   const [authToken, setAuthToken] = useState('nexus-dev-token-xyz');
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -234,6 +236,10 @@ const App = () => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'LOG_ENTRY') {
+          if (data.payload.model) {
+             setModelLabel(data.payload.model);
+          }
+
           if (data.payload.final_answer) {
              setFinalOutput(data.payload.final_answer);
           }
@@ -321,7 +327,7 @@ const App = () => {
 
   return (
     <div className="flex flex-col h-screen bg-[#0B0F1A] text-[#E5E7EB] font-sans selection:bg-[#6366F1]/30">
-      <Header isExecuting={isExecuting} activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Header isExecuting={isExecuting} activeTab={activeTab} setActiveTab={setActiveTab} modelLabel={modelLabel} />
 
       {activeTab === 'chat' ? (
         <>

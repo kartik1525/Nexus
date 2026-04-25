@@ -51,6 +51,18 @@ const extractPageContent = () => {
   };
 };
 
+const getSelector = (selector: any): string => {
+  if (typeof selector === 'string') return selector;
+  if (selector == null) return '';
+  return String(selector);
+};
+
+const queryElement = (selector: any): HTMLElement | null => {
+  const safeSelector = getSelector(selector);
+  if (!safeSelector.trim()) return null;
+  return document.querySelector(safeSelector) as HTMLElement;
+};
+
 chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: (response?: any) => void) => {
   try {
     switch (message.action) {
@@ -59,12 +71,12 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
         break;
       }
       case 'read_dom': {
-        const el = document.querySelector(message.selector) as HTMLElement;
+        const el = queryElement(message.selector);
         sendResponse({ success: true, text: el ? el.innerText : null });
         break;
       }
       case 'click_element': {
-        const el = document.querySelector(message.selector) as HTMLElement;
+        const el = queryElement(message.selector);
         if (el) {
           el.click();
           sendResponse({ success: true, status: 'clicked' });
@@ -74,9 +86,9 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
         break;
       }
       case 'fill_form_field': {
-        const el = document.querySelector(message.selector) as HTMLInputElement;
+        const el = queryElement(message.selector) as HTMLInputElement | null;
         if (el) {
-          el.value = message.value;
+          el.value = message.value == null ? '' : String(message.value);
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           sendResponse({ success: true, status: 'filled' });
@@ -86,7 +98,7 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
         break;
       }
       case 'scroll_to_element': {
-        const el = document.querySelector(message.selector) as HTMLElement;
+        const el = queryElement(message.selector);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           sendResponse({ success: true, status: 'scrolled' });
