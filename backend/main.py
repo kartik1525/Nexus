@@ -4,15 +4,15 @@ import asyncio
 import uuid
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException, status
+from fastapi import FastAPI, WebSocket, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import google.generativeai as genai
 
 from database import engine, Base, get_db
-from models import ExecutionLog, LogEntry, SelectorCache
+from models import ExecutionLog, LogEntry
 from tools import GEMINI_TOOLS, AVAILABLE_TOOLS_MAP
-import datetime
+from google.api_core.exceptions import ResourceExhausted
 
 # Load Environment Variables & Gemini API
 load_dotenv()
@@ -34,6 +34,7 @@ app.add_middleware(
 STATIC_AUTH_TOKEN = "nexus-dev-token-xyz"
 
 MAX_HISTORY_STEPS = 20
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
 @app.get("/")
 def root():
@@ -48,15 +49,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
     await websocket.accept()
     session_id = str(uuid.uuid4())
     step_num = 1
+    run_status = "RUNNING"
     
-    model = genai.GenerativeModel(model_name="gemini-2.5-flash", tools=GEMINI_TOOLS)
+    model = genai.GenerativeModel(model_name=GEMINI_MODEL, tools=GEMINI_TOOLS)
     
     try:
         data = await websocket.receive_text()
         message = json.loads(data)
         
         if message.get("type") == "TASK_REQUEST":
-            task_content = message.get("payload", {}).get("task", "")
+            payload = message.get("payload", {})
+            task_content = payload.get("task", "")
+            page_context = payload.get("page")
             
             # Persist Task
             new_exec = ExecutionLog(session_id=session_id, task_request=task_content, status="RUNNING")
@@ -67,16 +71,37 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
             chat = model.start_chat()
             
             # Prime the loop with the initial task
-            prompt = f"Goal: {task_content}. Decompose the task and use your browser tools effectively."
+            prompt = (
+                f"Goal: {task_content}\n\n"
+                f"Current page context JSON:\n{json.dumps(page_context, ensure_ascii=False)[:16000]}\n\n"
+                "You are controlling a Chrome extension through the available browser tools. "
+                "Use the provided page context first. Use browser tools only when you need fresh DOM data, navigation, "
+                "clicks, form entry, scrolling, screenshots, or tab control. "
+                "When the task is complete, respond with the final answer for the user and do not call another tool."
+            )
+            last_model_text = ""
             
             while True:
+                # Throttle requests to ~15 RPM to prevent Free Tier Burst Limit
+                await asyncio.sleep(4.1)
+
                 # Prevent runaway context bloat
                 if len(chat.history) > MAX_HISTORY_STEPS * 2:
                     chat.history = chat.history[(-1 * MAX_HISTORY_STEPS * 2):]
                 
                 try:
                     response = await chat.send_message_async(prompt)
+                except ResourceExhausted as limit_err:
+                    await websocket.send_text(json.dumps({"type": "LOG_ENTRY", "payload": {"thought": "API Rate Limit (Free Tier) reached. Pausing for 60 seconds to recover quota...", "status": "RUNNING"}}))
+                    await asyncio.sleep(60)
+                    try:
+                        response = await chat.send_message_async(prompt)
+                    except Exception as e2:
+                        run_status = "FAILED"
+                        await websocket.send_text(json.dumps({"type": "LOG_ENTRY", "payload": {"thought": f"API Error after pause: {str(e2)}", "status": "FAILED"}}))
+                        break
                 except Exception as e:
+                    run_status = "FAILED"
                     await websocket.send_text(json.dumps({"type": "LOG_ENTRY", "payload": {"thought": f"API Error: {str(e)}", "status": "FAILED"}}))
                     break
 
@@ -85,6 +110,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
                 if response.parts:
                     for part in response.parts:
                         if part.text:
+                            last_model_text = part.text
                             # Log Thought
                             log_th = LogEntry(session_id=session_id, step_number=step_num, role="Thought", content=part.text, status="SUCCESS")
                             db.add(log_th)
@@ -139,8 +165,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
                     # If LLM finishes reasoning and doesn't call a function, it means it considers the goal achieved or requires human input.
                     exec_log = db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).first()
                     exec_log.status = "SUCCESS"
+                    run_status = "SUCCESS"
                     db.commit()
-                    await websocket.send_text(json.dumps({"type": "LOG_ENTRY", "payload": {"thought": "Task completion logic reached by Agent.", "status": "FINISH"}}))
+                    final_answer = last_model_text or "Task completion logic reached by Agent."
+                    await websocket.send_text(json.dumps({
+                        "type": "LOG_ENTRY",
+                        "payload": {
+                            "thought": final_answer,
+                            "final_answer": final_answer,
+                            "status": "FINISH"
+                        }
+                    }))
                     break
         else:
              await websocket.close()
@@ -151,5 +186,5 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
         # Mark as done / disconnected
         exec_log = db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).first()
         if exec_log and exec_log.status == "RUNNING":
-            exec_log.status = "DISCONNECTED"
+            exec_log.status = "DISCONNECTED" if run_status == "RUNNING" else run_status
             db.commit()

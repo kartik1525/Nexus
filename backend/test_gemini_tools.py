@@ -8,8 +8,8 @@ load_dotenv()
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def verify_gemini_function_calling():
-    print("Initializing GenerativeModel with 10 tools...")
-    model = genai.GenerativeModel(model_name="gemini-2.5-flash", tools=GEMINI_TOOLS)
+    print(f"Initializing GenerativeModel with {len(GEMINI_TOOLS)} tools...")
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash-lite", tools=GEMINI_TOOLS)
     chat = model.start_chat()
     
     # Asserting correct tool ingestion natively
@@ -21,7 +21,9 @@ def verify_gemini_function_calling():
         if getattr(part, 'function_call', None):
             func_call = part.function_call
 
-    assert func_call is not None, "Gemini failed to output a FunctionCall!"
+    if func_call is None:
+        raise AssertionError("Gemini failed to output a FunctionCall!")
+    
     assert func_call.name == "navigate", "Gemini did not map to the correct tool!"
     
     args = {key: val for key, val in func_call.args.items()}
@@ -34,7 +36,9 @@ def verify_gemini_function_calling():
         if getattr(part, 'function_call', None):
             func_call_tab = part.function_call
 
-    assert func_call_tab is not None, "Failed second function call mapping."
+    if func_call_tab is None:
+        raise AssertionError("Failed second function call mapping.")
+    
     assert func_call_tab.name in ["open_new_tab", "navigate"], "Did not grasp tab mechanics."
     
     print("✅ Integration Checks Passed! LLM perfectly understands the Tool Registry.")

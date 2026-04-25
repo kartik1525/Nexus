@@ -5,13 +5,19 @@
   "description": "AI-Powered Browser Orchestration Extension",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "sidePanel"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8000 ws://localhost:8000 http://127.0.0.1:8000 ws://127.0.0.1:8000"
+  },
   "background": {
     "service_worker": "src/background.ts",
     "type": "module"

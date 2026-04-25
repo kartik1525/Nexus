@@ -1,5 +1,3 @@
-import json
-
 def read_dom(selector: str) -> dict:
     """Scans and extracts the textual data from the active browser tab elements matching the given CSS selector."""
     return {"action": "read_dom", "selector": selector}
@@ -15,10 +13,6 @@ def fill_form_field(selector: str, value: str) -> dict:
 def navigate(url: str, tabId: int = None) -> dict:
     """Redirects the browser tab to the requested URL. Specify tabId if orchestrating multiple tabs."""
     return {"action": "navigate", "url": url, "tabId": tabId}
-
-def notion_create_page(title: str, content: str = "") -> dict:
-    """A mock API action representing creating a Notion documentation page with a title and content."""
-    return {"action": "notion_create_page", "title": title, "content": content}
 
 def open_new_tab(url: str, active: bool = True) -> dict:
     """Opens the specified URL in a completely new Chrome Browser Tab. Set active to interact with it immediately."""
@@ -43,7 +37,7 @@ def take_screenshot() -> dict:
 
 GEMINI_TOOLS = [
     read_dom, click_element, fill_form_field, navigate,
-    notion_create_page, open_new_tab, switch_tab, close_tab,
+    open_new_tab, switch_tab, close_tab,
     scroll_to_element, take_screenshot
 ]
 
