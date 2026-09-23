@@ -1,22 +1,31 @@
 import json
 import uuid
-from json import JSONDecodeError
+from typing import Any, Dict
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Query, WebSocket
+from fastapi import Depends, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from google.genai import types
 from sqlalchemy.orm import Session
 
 from database import Base, engine, get_db
 from models import ExecutionLog, LogEntry
-from services.llm import OpenRouterError, chat_completion, get_model_label
-from tools import AVAILABLE_TOOLS_MAP, OPENROUTER_TOOLS
+from services.gemini import (
+    GeminiError,
+    create_agent_config,
+    extract_response_details,
+    get_gemini_client,
+    get_model_label,
+    get_model_name,
+)
+from tools import AVAILABLE_TOOLS_MAP
 
 load_dotenv()
 
+# Initialize DB tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Nexus Agent Backend")
+app = FastAPI(title="Nexus Agent Backend - Gemini Powered")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,59 +35,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATIC_AUTH_TOKEN = "nexus-dev-token-xyz"
-MAX_AGENT_STEPS = 20
+MAX_AGENT_STEPS = 15
 
 
 @app.get("/")
 def root():
     return {
         "status": "ok",
-        "agent": "nexus-v1-openrouter",
+        "agent": "nexus-gemini-v2",
         "model": get_model_label(),
+        "capabilities": [
+            "Browser Automation",
+            "DOM Reading",
+            "Element Interaction",
+            "Form Filling",
+            "Navigation Control",
+        ],
     }
 
 
-def save_log(db: Session, session_id: str, step_number: int, role: str, content: str, status: str) -> None:
-    db.add(LogEntry(
-        session_id=session_id,
-        step_number=step_number,
-        role=role,
-        content=content,
-        status=status,
-    ))
-    db.commit()
+def safe_save_log(
+    db: Session,
+    session_id: str,
+    step_number: int,
+    role: str,
+    content: str,
+    status: str,
+) -> None:
+    try:
+        db.add(
+            LogEntry(
+                session_id=session_id,
+                step_number=step_number,
+                role=role,
+                content=str(content),
+                status=status,
+            )
+        )
+        db.commit()
+    except Exception as e:
+        print(f"Log save warning: {e}")
 
 
-async def send_log(websocket: WebSocket, payload: dict):
+async def send_log(websocket: WebSocket, payload: Dict[str, Any]):
     await websocket.send_text(json.dumps({"type": "LOG_ENTRY", "payload": payload}))
 
 
-def decode_tool_args(raw_args: str | dict | None) -> dict:
-    if raw_args is None:
-        return {}
-    if isinstance(raw_args, dict):
-        return raw_args
-    try:
-        return json.loads(raw_args)
-    except JSONDecodeError as exc:
-        raise ValueError(f"Tool arguments were not valid JSON: {raw_args}") from exc
-
-
 @app.websocket("/v1/ws/agent")
-async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: Session = Depends(get_db)):
-    if token != STATIC_AUTH_TOKEN:
-        await websocket.close(code=1008)
-        return
-
+async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)):
     await websocket.accept()
     session_id = str(uuid.uuid4())
     step_num = 1
     run_status = "RUNNING"
 
     try:
-        data = await websocket.receive_text()
-        message = json.loads(data)
+        raw_msg = await websocket.receive_text()
+        message = json.loads(raw_msg)
 
         if message.get("type") != "TASK_REQUEST":
             await websocket.close()
@@ -88,145 +100,181 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), db: 
         task_content = payload.get("task", "")
         page_context = payload.get("page")
 
-        db.add(ExecutionLog(session_id=session_id, task_request=task_content, status="RUNNING"))
-        db.commit()
+        # Record start in execution logs
+        try:
+            db.add(ExecutionLog(session_id=session_id, task_request=task_content, status="RUNNING"))
+            db.commit()
+        except Exception:
+            pass
 
+        model_label = get_model_label()
         await send_log(websocket, {
-            "thought": f"Model: {get_model_label()}",
-            "model": get_model_label(),
+            "thought": f"Initializing Nexus Agent powered by {model_label}...",
+            "model": model_label,
             "status": "RUNNING",
         })
 
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are Nexus Agent, a browser task execution agent. "
-                    "Plan briefly, then call browser tools when action is required. "
-                    "Use the provided page context first. "
-                    "When the task is complete, answer the user directly without calling another tool."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Goal: {task_content}\n\n"
-                    f"Current page context JSON:\n{json.dumps(page_context, ensure_ascii=False)[:16000]}"
-                ),
-            },
+        # Initialize Gemini Client
+        try:
+            client = get_gemini_client()
+        except GeminiError as ge:
+            err_msg = str(ge)
+            safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
+            await send_log(websocket, {
+                "thought": f"⚠️ {err_msg}",
+                "final_answer": err_msg,
+                "status": "FAILED",
+            })
+            return
+
+        # Prepare initial page context summary for Gemini
+        page_summary = "No page data available."
+        if page_context and isinstance(page_context, dict):
+            page_summary = (
+                f"Page Title: {page_context.get('title', 'Unknown')}\n"
+                f"Page URL: {page_context.get('url', 'Unknown')}\n"
+                f"Headings: {json.dumps(page_context.get('headings', []), ensure_ascii=False)[:500]}\n"
+                f"Interactive Inputs/Buttons: {json.dumps(page_context.get('inputs', []), ensure_ascii=False)[:1500]}\n"
+                f"Key Links: {json.dumps(page_context.get('links', [])[:20], ensure_ascii=False)[:1000]}\n"
+                f"Body Text Preview:\n{str(page_context.get('text', ''))[:4000]}"
+            )
+
+        user_prompt = (
+            f"User Goal: {task_content}\n\n"
+            f"=== CURRENT BROWSER PAGE CONTEXT ===\n"
+            f"{page_summary}\n"
+            f"====================================\n\n"
+            f"Please inspect the current page context and execute the necessary browser tools to accomplish the goal."
+        )
+
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_prompt)],
+            )
         ]
 
+        agent_config = create_agent_config()
+        model_name = get_model_name()
+
         for _ in range(MAX_AGENT_STEPS):
+            # Call Gemini
             try:
-                llm_result = await chat_completion(messages, tools=OPENROUTER_TOOLS)
-            except OpenRouterError as exc:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=agent_config,
+                )
+            except Exception as exc:
+                err_msg = f"Gemini API Error: {exc}"
+                safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
+                await send_log(websocket, {"thought": err_msg, "status": "FAILED"})
                 run_status = "FAILED"
-                error_text = str(exc)
-                save_log(db, session_id, step_num, "Error", error_text, "FAILED")
-                await send_log(websocket, {"thought": error_text, "status": "FAILED"})
                 break
 
-            model_label = llm_result["model_label"]
-            thought = llm_result["content"]
-            tool_calls = llm_result["tool_calls"]
+            thought, tool_calls, content_obj = extract_response_details(response)
 
             if thought:
-                save_log(db, session_id, step_num, "Thought", thought, "SUCCESS")
+                safe_save_log(db, session_id, step_num, "Thought", thought, "SUCCESS")
                 step_num += 1
                 await send_log(websocket, {
                     "thought": thought,
                     "model": model_label,
-                    "status": "SUCCESS",
+                    "status": "RUNNING",
                 })
 
+            # Check if Gemini completed without more tool calls
             if not tool_calls:
-                run_status = "SUCCESS"
-                exec_log = db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).first()
-                if exec_log:
-                    exec_log.status = "SUCCESS"
-                    db.commit()
-
-                final_answer = thought or "Task completed."
+                final_answer = thought or "Goal successfully completed."
+                safe_save_log(db, session_id, step_num, "Done", final_answer, "SUCCESS")
                 await send_log(websocket, {
                     "thought": final_answer,
                     "final_answer": final_answer,
                     "model": model_label,
                     "status": "FINISH",
                 })
+                run_status = "SUCCESS"
                 break
 
+            # Process the tool call
             tool_call = tool_calls[0]
-            function_call = tool_call.get("function", {})
-            func_name = function_call.get("name")
+            func_name = tool_call.get("name")
+            func_args = tool_call.get("arguments", {})
 
-            try:
-                func_args = decode_tool_args(function_call.get("arguments"))
-            except ValueError as exc:
-                run_status = "FAILED"
-                await send_log(websocket, {"thought": str(exc), "status": "FAILED"})
-                break
-
-            messages.append({
-                "role": "assistant",
-                "content": thought or "",
-                "tool_calls": [tool_call],
-            })
+            # Append the model's turn to conversation history
+            if content_obj:
+                contents.append(content_obj)
 
             if func_name not in AVAILABLE_TOOLS_MAP:
-                observation_text = f"Tool not found in registry: {func_name}"
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "name": func_name,
-                    "content": observation_text,
-                })
+                obs_err = f"Tool '{func_name}' is not supported in the browser bridge."
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_function_response(
+                                name=func_name,
+                                response={"error": obs_err},
+                            )
+                        ],
+                    )
+                )
                 continue
 
-            tool_internal_payload = AVAILABLE_TOOLS_MAP[func_name](**func_args)
-            action_text = f"{func_name}({func_args})"
-            save_log(db, session_id, step_num, "Action", action_text, "RUNNING")
+            # Generate internal bridge payload to send to Chrome extension
+            tool_payload = AVAILABLE_TOOLS_MAP[func_name](**func_args)
+            action_desc = f"{func_name}({func_args})"
+
+            safe_save_log(db, session_id, step_num, "Action", action_desc, "RUNNING")
             step_num += 1
 
             await send_log(websocket, {
-                "action": action_text,
-                "bridge_trigger": tool_internal_payload,
+                "action": action_desc,
+                "bridge_trigger": tool_payload,
                 "model": model_label,
                 "status": "RUNNING",
             })
 
-            obs_data = await websocket.receive_text()
-            obs_message = json.loads(obs_data)
-            observation_text = obs_message.get("payload", {}).get("observation", "No observation returned")
-            success_str = obs_message.get("payload", {}).get("status", "SUCCESS")
+            # Wait for execution observation from extension
+            obs_raw = await websocket.receive_text()
+            obs_data = json.loads(obs_raw)
+            obs_payload = obs_data.get("payload", {})
+            obs_result = obs_payload.get("observation", "Action executed in browser.")
+            obs_status = obs_payload.get("status", "SUCCESS")
 
-            save_log(db, session_id, step_num, "Observation", observation_text, success_str)
+            safe_save_log(db, session_id, step_num, "Observation", str(obs_result), obs_status)
             step_num += 1
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.get("id"),
-                "name": func_name,
-                "content": json.dumps({
-                    "result": observation_text,
-                    "status": success_str,
-                }),
-            })
+            # Feed observation back to Gemini
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_function_response(
+                            name=func_name,
+                            response={"result": str(obs_result), "status": obs_status},
+                        )
+                    ],
+                )
+            )
+
         else:
-            run_status = "FAILED"
             await send_log(websocket, {
-                "thought": f"Stopped after {MAX_AGENT_STEPS} model/tool iterations.",
-                "status": "FAILED",
+                "thought": f"Reached maximum allowed steps ({MAX_AGENT_STEPS}).",
+                "final_answer": "Execution stopped after maximum steps.",
+                "status": "FINISH",
             })
 
-    except Exception as general_err:
-        run_status = "FAILED"
-        print(f"Exception during task stream: {general_err}")
+    except Exception as e:
+        print(f"WebSocket session error: {e}")
         try:
-            await send_log(websocket, {"thought": f"Backend error: {general_err}", "status": "FAILED"})
+            await send_log(websocket, {"thought": f"Session error: {e}", "status": "FAILED"})
         except Exception:
             pass
     finally:
-        exec_log = db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).first()
-        if exec_log and exec_log.status == "RUNNING":
-            exec_log.status = "DISCONNECTED" if run_status == "RUNNING" else run_status
-            db.commit()
+        try:
+            exec_log = db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).first()
+            if exec_log and exec_log.status == "RUNNING":
+                exec_log.status = run_status
+                db.commit()
+        except Exception:
+            pass
