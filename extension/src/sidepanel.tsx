@@ -238,7 +238,7 @@ export const App = () => {
   const [steps, setSteps] = useState<StepGroup[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [finalOutput, setFinalOutput] = useState<string | null>(null);
-  const [modelLabel, setModelLabel] = useState('Gemini 2.5 Flash');
+  const [modelLabel, setModelLabel] = useState('Gemini 3.6 Flash');
   const [backendUrl, setBackendUrl] = useState('ws://localhost:8001/v1/ws/agent');
 
   const bottomRef = useRef<HTMLDivElement>(null);
