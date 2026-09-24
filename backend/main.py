@@ -12,6 +12,7 @@ from database import Base, engine, get_db
 from models import ExecutionLog, LogEntry
 from services.gemini import (
     GeminiError,
+    MODEL_FAILOVER_POOL,
     create_agent_config,
     extract_response_details,
     get_gemini_client,
@@ -158,7 +159,7 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
         model_name = get_model_name()
 
         candidate_models = [model_name]
-        for fallback in ["gemini-3.5-flash", "gemini-3.6-flash"]:
+        for fallback in MODEL_FAILOVER_POOL:
             if fallback not in candidate_models:
                 candidate_models.append(fallback)
 
@@ -167,25 +168,22 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
             last_err = None
 
             for m in candidate_models:
-                for attempt in range(2):
-                    try:
-                        response = client.models.generate_content(
-                            model=m,
-                            contents=contents,
-                            config=agent_config,
-                        )
-                        model_name = m
-                        model_label = f"Gemini ({m})"
-                        break
-                    except Exception as exc:
-                        last_err = exc
-                        err_str = str(exc).lower()
-                        if "503" in err_str or "unavailable" in err_str or "aborted" in err_str or "reset" in err_str:
-                            import asyncio
-                            await asyncio.sleep(1.0)
-                            continue
-                        break
-                if response:
+                try:
+                    response = client.models.generate_content(
+                        model=m,
+                        contents=contents,
+                        config=agent_config,
+                    )
+                    model_name = m
+                    model_label = f"Gemini ({m})"
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    err_str = str(exc).lower()
+                    print(f"[Nexus Failover] Model {m} failed ({err_str[:60]}), switching to next model in pool...")
+                    # If high demand (503), rate limit (429), not found (404), or network glitch, try next model
+                    if any(k in err_str for k in ["503", "unavailable", "demand", "429", "exhausted", "not_found", "aborted", "reset"]):
+                        continue
                     break
 
             if not response:

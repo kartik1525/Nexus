@@ -11,6 +11,14 @@ from tools import BROWSER_TOOLS
 
 DEFAULT_MODEL = "gemini-3.5-flash"
 DEPRECATED_MODELS = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash"}
+MODEL_FAILOVER_POOL = [
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+]
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "llm.json"
 
 
