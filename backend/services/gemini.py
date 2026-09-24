@@ -9,7 +9,7 @@ from google.genai import types
 
 from tools import BROWSER_TOOLS
 
-DEFAULT_MODEL = "gemini-3.6-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
 DEPRECATED_MODELS = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash"}
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "llm.json"
 

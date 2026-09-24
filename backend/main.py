@@ -157,33 +157,43 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
         agent_config = create_agent_config()
         model_name = get_model_name()
 
+        candidate_models = [model_name]
+        for fallback in ["gemini-3.5-flash", "gemini-3.6-flash"]:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
+
         for _ in range(MAX_AGENT_STEPS):
-            # Call Gemini
             response = None
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=agent_config,
-                )
-            except Exception as exc:
-                if model_name != "gemini-3.6-flash":
+            last_err = None
+
+            for m in candidate_models:
+                for attempt in range(2):
                     try:
-                        model_name = "gemini-3.6-flash"
                         response = client.models.generate_content(
-                            model=model_name,
+                            model=m,
                             contents=contents,
                             config=agent_config,
                         )
-                    except Exception as fallback_exc:
-                        exc = fallback_exc
-
-                if not response:
-                    err_msg = f"Gemini API Error: {exc}"
-                    safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
-                    await send_log(websocket, {"thought": err_msg, "status": "FAILED"})
-                    run_status = "FAILED"
+                        model_name = m
+                        model_label = f"Gemini ({m})"
+                        break
+                    except Exception as exc:
+                        last_err = exc
+                        err_str = str(exc).lower()
+                        if "503" in err_str or "unavailable" in err_str or "aborted" in err_str or "reset" in err_str:
+                            import asyncio
+                            await asyncio.sleep(1.0)
+                            continue
+                        break
+                if response:
                     break
+
+            if not response:
+                err_msg = f"Gemini API Error: {last_err}"
+                safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
+                await send_log(websocket, {"thought": err_msg, "status": "FAILED"})
+                run_status = "FAILED"
+                break
 
             thought, tool_calls, content_obj = extract_response_details(response)
 
