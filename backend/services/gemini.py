@@ -9,9 +9,8 @@ from google.genai import types
 
 from tools import BROWSER_TOOLS
 
-load_dotenv()
-
 DEFAULT_MODEL = "gemini-3.6-flash"
+DEPRECATED_MODELS = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash"}
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "llm.json"
 
 
@@ -20,16 +19,20 @@ class GeminiError(RuntimeError):
 
 
 def load_model_config() -> str:
-    if os.environ.get("GEMINI_MODEL"):
-        return os.environ["GEMINI_MODEL"]
-    if CONFIG_PATH.exists():
+    # Always reload .env with override=True so changes take effect without restarting
+    load_dotenv(override=True)
+    model = os.environ.get("GEMINI_MODEL")
+    if not model and CONFIG_PATH.exists():
         try:
             with CONFIG_PATH.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("model") or DEFAULT_MODEL
+                model = data.get("model")
         except Exception:
             pass
-    return DEFAULT_MODEL
+    model = (model or DEFAULT_MODEL).strip().strip('"').strip("'")
+    if model in DEPRECATED_MODELS:
+        model = DEFAULT_MODEL
+    return model
 
 
 def get_model_name() -> str:
@@ -42,12 +45,13 @@ def get_model_label() -> str:
 
 
 def get_gemini_client(api_key: Optional[str] = None) -> genai.Client:
+    load_dotenv(override=True)
     key = api_key or os.environ.get("GEMINI_API_KEY")
     if not key or key.strip() == "" or "your_gemini_api_key" in key:
         raise GeminiError(
             "GEMINI_API_KEY is not configured. Please add your Gemini API Key to backend/.env (Get a free key at https://aistudio.google.com/)."
         )
-    return genai.Client(api_key=key.strip())
+    return genai.Client(api_key=key.strip().strip('"').strip("'"))
 
 
 SYSTEM_INSTRUCTION = """You are Nexus Agent, an autonomous browser automation co-pilot operating directly inside Google Chrome.

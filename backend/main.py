@@ -159,6 +159,7 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
 
         for _ in range(MAX_AGENT_STEPS):
             # Call Gemini
+            response = None
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -166,11 +167,23 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
                     config=agent_config,
                 )
             except Exception as exc:
-                err_msg = f"Gemini API Error: {exc}"
-                safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
-                await send_log(websocket, {"thought": err_msg, "status": "FAILED"})
-                run_status = "FAILED"
-                break
+                if model_name != "gemini-3.6-flash":
+                    try:
+                        model_name = "gemini-3.6-flash"
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=agent_config,
+                        )
+                    except Exception as fallback_exc:
+                        exc = fallback_exc
+
+                if not response:
+                    err_msg = f"Gemini API Error: {exc}"
+                    safe_save_log(db, session_id, step_num, "Error", err_msg, "FAILED")
+                    await send_log(websocket, {"thought": err_msg, "status": "FAILED"})
+                    run_status = "FAILED"
+                    break
 
             thought, tool_calls, content_obj = extract_response_details(response)
 
