@@ -1,168 +1,166 @@
-# Nexus Agent 🚀
+# Nexus Agent
 
-**AI-Powered Browser Automation & Orchestration Platform**
+A Chrome extension + FastAPI backend that turns the browser into an AI-powered workflow assistant.
 
-Nexus Agent transforms Google Chrome into an intelligent, autonomous workspace. By embedding a ReAct AI agent directly inside Chrome's Side Panel, Nexus Agent eliminates context switching between external chat interfaces and web pages. It interprets natural language goals, analyzes live page DOM, interacts with web elements, fills forms, navigates tabs, and streams reasoning in real time using the **Google Gemini API**.
-
----
-
-## 🌟 Key Capabilities
-
-Nexus Agent specializes in 5 core browser automation tasks:
-
-1. **DOM Reading & Extraction**
-   - Extracts page titles, URLs, primary headings, input fields, interactive links, and clean text.
-   - Queries specific elements by CSS selector or semantic description.
-2. **Element Interaction**
-   - Clicks buttons, links, toggles, and dropdowns.
-   - Fuzzy element resolution: automatically matches by CSS selector, ID, `name`, or visible text content (e.g. "Submit", "Sign In").
-3. **Form Filling & Submission**
-   - Automatically populates textboxes, search bars, textareas, and form inputs.
-   - Triggers native `input`, `change`, and `blur` events.
-   - Supports automatic form submission via simulated `Enter` key events.
-4. **Navigation Control**
-   - Navigates active tabs to target URLs (`https://...`).
-   - Opens and switches between browser tabs.
-   - Smoothly scrolls viewports (`up` / `down`) to explore dynamic and infinite-scroll pages.
-5. **Multi-Model Failover Pool**
-   - Uses Google's official `google-genai` Python SDK.
-   - Built-in multi-model pool (`gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3-flash-preview`, `gemini-3.8-flash`).
-   - Automatically and instantly fails over across candidate models if any single endpoint encounters temporary high demand (503).
+Nexus Agent brings a ReAct-style agent directly into Chrome’s side panel so you can explore pages, interact with UI elements, fill forms, and navigate the web using natural language instructions.
 
 ---
 
-## 🏗️ Architecture
+## Overview
+
+Nexus Agent helps you:
+
+- read and interpret live page content
+- identify and interact with page elements
+- fill forms and trigger input flows
+- navigate tabs and URLs automatically
+- orchestrate browser tasks using Gemini-powered reasoning
+
+It combines a Chrome extension front end with a FastAPI backend and model failover logic to make browser automation feel more like a collaborative assistant than a scripted tool.
+
+---
+
+## Key capabilities
+
+### 1. DOM reading and extraction
+- Reads page titles, URLs, headings, inputs, links, and visible text
+- Queries the page by CSS selector or semantic description
+- Extracts structured information from dynamic web content
+
+### 2. Element interaction
+- Clicks buttons, links, toggles, and dropdowns
+- Resolves elements by CSS selector, ID, `name`, or visible text
+- Supports fuzzy matching for common UI actions
+
+### 3. Form filling and submission
+- Fills textboxes, search bars, textareas, and form inputs
+- Triggers native `input`, `change`, and `blur` events
+- Submits forms automatically when needed
+
+### 4. Navigation control
+- Opens or switches tabs
+- Moves to target URLs
+- Scrolls the viewport to explore content and infinite-scroll pages
+
+### 5. Multi-model failover
+- Uses the official Google GenAI Python SDK
+- Supports a pool of Gemini models
+- Automatically retries across alternative models if one endpoint is temporarily unavailable
+
+---
+
+## Architecture
 
 ```text
 Chrome Extension (Manifest V3)
-│
-├── Side Panel (React + TypeScript + Tailwind CSS)
-│   ├── Real-time Thought / Action / Observation Stream
-│   ├── Quick Action Chips (Read Page, Find Form, Navigate Wiki)
-│   └── Settings Panel (WebSocket URL & API Key Status)
-│
+├── Side Panel (React + TypeScript)
+│   ├── live reasoning stream
+│   ├── quick action chips
+│   └── settings panel
 ├── Background Service Worker
-│   ├── Tab Management & URL Routing
-│   ├── Universal Inline Script Executor (Zero-delay fallback)
-│   └── Auto-injection on Extension Reload
-│
+│   ├── tab and URL routing
+│   ├── script execution fallback
+│   └── extension auto-injection
 └── Content Script
-    ├── Structured Page Extractor
-    └── Smart Element Matcher & Event Dispatcher
-         │
-         │ (WebSocket: ws://localhost:8001/v1/ws/agent)
-         ▼
+    ├── structured page extraction
+    └── DOM matching and event dispatch
+          │
+          │ WebSocket: ws://localhost:8001/v1/ws/agent
+          ▼
 FastAPI Backend
-├── Services
-│   └── gemini.py (Google GenAI Client, Model Pool, Tool Declarations)
-├── tools.py (DOM reading, Element click, Form fill, Navigation tools)
-├── database.py & models.py (SQLite Session & Execution Audit Logs)
-└── main.py (FastAPI WebSocket Agent ReAct Orchestrator)
+├── services/gemini.py
+│   └── Gemini client, model pool, tool declarations
+├── tools.py
+│   └── DOM reading, click, form fill, navigation tools
+├── database.py and models.py
+│   └── SQLite session and audit logs
+├── main.py
+│   └── ReAct-style orchestration server
+└── config/
+    └── llm configuration
 ```
 
 ---
 
-## 🚀 Getting Started
+## Getting started
 
 ### Prerequisites
 
-- **Node.js**: v18 or later (`npm` included)
-- **Python**: 3.10 or later
-- **Google Chrome**: Latest version
-- **Gemini API Key**: Free key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- Node.js 18+
+- Python 3.10+
+- Google Chrome (latest version)
+- Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+
+### 1. Backend setup
+
+Open a terminal in the backend folder:
+
+```powershell
+cd backend
+pip install -r requirements.txt
+```
+
+Create a `.env` file in the backend folder:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.5-flash
+```
+
+Start the backend:
+
+```powershell
+python -m uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+The app will be available at `http://127.0.0.1:8001`.
+
+### 2. Extension setup
+
+Open a terminal in the extension folder:
+
+```powershell
+cd extension
+npm install
+npm run build
+```
+
+This generates the compiled extension bundle in the `dist` folder.
+
+### 3. Load the extension in Chrome
+
+1. Open `chrome://extensions/`
+2. Enable Developer mode
+3. Click Load unpacked
+4. Select the extension `dist` folder
+5. Pin the Nexus Agent extension to the toolbar
 
 ---
 
-### 1. Backend Setup
+## Example usage
 
-1. Open a terminal and navigate to `backend`:
-   ```powershell
-   cd backend
-   ```
+Open any page such as [Wikipedia](https://en.wikipedia.org) or a form, then open the Nexus Agent side panel and try prompts like:
 
-2. Install dependencies:
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-3. Configure your Gemini API key in `backend/.env`:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-3.5-flash
-   ```
-
-4. Start the FastAPI backend server:
-   ```powershell
-   python -m uvicorn main:app --host 127.0.0.1 --port 8001 --reload
-   ```
-   *The backend will be running at `http://127.0.0.1:8001`.*
+- “Read this page and summarize the main topic.”
+- “Search for quantum computing in the page search box.”
+- “Click the first article link.”
+- “Navigate to https://wikipedia.org and read the top headline.”
+- “Go to wikipedia.org, search for James Webb Space Telescope, and tell me its launch date and primary mirror size.”
 
 ---
 
-### 2. Chrome Extension Setup
+## Testing and verification
 
-1. Open a new terminal and navigate to `extension`:
-   ```powershell
-   cd extension
-   ```
+Run the backend checks:
 
-2. Install dependencies:
-   ```powershell
-   npm install
-   ```
-
-3. Build the extension bundle:
-   ```powershell
-   npm run build
-   ```
-   *(Compiled files will be generated in `extension/dist`).*
-
----
-
-### 3. Load Extension in Google Chrome
-
-1. Open Google Chrome and navigate to:
-   ```text
-   chrome://extensions/
-   ```
-2. In the top-right corner, turn **Developer mode** **ON**.
-3. In the top-left corner, click **Load unpacked**.
-4. In the folder picker, select:
-   ```text
-   D:\Nexus-main\extension\dist
-   ```
-   *(Ensure you select the `dist` folder, where `manifest.json` is located).*
-5. Click the puzzle icon in Chrome and **pin** Nexus Agent to your toolbar.
-
----
-
-## 🎯 Usage Examples
-
-Open any webpage (e.g. [Wikipedia](https://en.wikipedia.org) or a Google Form), click the **Nexus Agent** icon in Chrome to open the Side Panel, and try:
-
-- **DOM Reading**:
-  > *"Read this page, summarize the main topic, and list key points."*
-- **Form Filling & Search**:
-  > *"Search for Quantum Computing in the search box on this page."*
-- **Element Interaction**:
-  > *"Click on the first article link."*
-- **Navigation Control**:
-  > *"Navigate to https://wikipedia.org and read the top headline."*
-- **Autonomous Multi-Step Goal**:
-  > *"Go to wikipedia.org, search for James Webb Space Telescope, and tell me its launch date and primary mirror size."*
-
----
-
-## 🧪 Testing & Verification
-
-Run the verification suites in the `backend` folder:
 ```powershell
 cd backend
 python test_gemini_tools.py
 python test_logs.py
 ```
 
-To run the extension in hot-reloading development mode:
+Run the extension in development mode:
+
 ```powershell
 cd extension
 npm run dev
@@ -170,6 +168,37 @@ npm run dev
 
 ---
 
-## 📄 License
+## Project structure
+
+```text
+Nexus/
+├── README.md
+├── PRD_content.md
+├── backend/
+│   ├── main.py
+│   ├── tools.py
+│   ├── database.py
+│   ├── models.py
+│   ├── schemas.py
+│   ├── requirements.txt
+│   ├── config/
+│   │   └── llm.json
+│   └── services/
+│       └── gemini.py
+└── extension/
+    ├── package.json
+    ├── vite.config.ts
+    ├── manifest.json
+    ├── index.html
+    └── src/
+        ├── background.ts
+        ├── content.ts
+        ├── sidepanel.tsx
+        └── index.css
+```
+
+---
+
+## License
 
 This project is licensed under the MIT License.
